@@ -12,7 +12,7 @@ function draw() {
   choice = random(0, 1);
 
   //if less than 0.5, draw "/" , else draw "\"
-  if (choice < 0.5) {
+  if (choice < 0.2) {
     line(x + size, y, x, y + size);
   } else {
     line(x, y, x + size, y + size);
