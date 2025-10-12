@@ -1,4 +1,4 @@
-let size = 230
+let size = 100
 let i0, i1, i2, i3
 
 function preload() {
@@ -9,9 +9,9 @@ function preload() {
 }
 
 function setup() {
-  createCanvas(3000, 1000);
+  createCanvas(innerWidth, innerHeight);
 
-  frameRate(2)
+  frameRate(5)
 }
 
 function draw() {

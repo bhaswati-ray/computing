@@ -5,14 +5,14 @@ function setup() {
 
 function draw() {
 
-  function mousePressed()
+  function mousePressed();
   let randomNo;
   randomNo = random (20,50)
   drawflower(mouseX,mouseY); {
   }
   
   //create flower
-  fill(random(100,250)0,0);
+  fill(random(100,250),0,0);
   noStroke();
   ellipse(x,y-petal/2,petal);
   ellipse(x,y+petal/2,petal);
