@@ -7,7 +7,7 @@ let xdir = 0, ydir = 0;
 
 function preload() {
   //load the full sprite image
-  spriteImage = loadImage('rpg_sprite_walk.png');
+  spriteImage = loadImage('img/rpg_sprite_walk.png');
 }
 
 function setup() {
@@ -46,7 +46,7 @@ function draw() {
 function keyPressed() {
   //read the appropriate row based on the key direction
   if(keyCode == UP_ARROW) {
-    row = 3; // select the right row
+    row = 1; // select the right row
     xdir = 0; //make sure the sprite doesnt move along x axis
     ydir = -8; //make sprite move up
   } else if(keyCode == DOWN_ARROW) {
@@ -54,11 +54,11 @@ function keyPressed() {
     xdir = 0; //make sure the sprite doesnt move along x axis
     ydir = 8; //make sprite move down
   } else if(keyCode == LEFT_ARROW) {
-    row = 1;
+    row = 2;
     ydir = 0; //make sure the sprite doesnt move along y axis
     xdir = -8; //make sprite move left
   } else if(keyCode == RIGHT_ARROW) {
-    row = 2;
+    row = 3;
     ydir = 0; //make sure the sprite doesnt move along y axis
     xdir = 8; //make sprite move left
   }
