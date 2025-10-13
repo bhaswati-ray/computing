@@ -2,7 +2,7 @@
 let rightButtonX, rightButtonY, leftButtonX, leftButtonY;
 let buttonRadius = 70;
 
-let flowers = [];   // Array to store flower particles (formerly yellow circles)
+let flowers = [];   // Array to store flower particles 
 let rainDrops = []; // Array to store rain drop particles
 
 // --- Setup Function (runs once) ---
