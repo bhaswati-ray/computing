@@ -14,10 +14,9 @@ function draw() {
 function mousePressed() {
   let tempFlower = new Flower(mouseX, mouseY, random( -5, 5), random(-5,5));
   flowers.push(tempFlower);
-
-  //   myFlower.drawFlower();
 }
 
+//   myFlower.drawFlower();
 //draw a flower at the point where i Click on the canvas
 //STEPS
 //Cliack somewhere ->mousePressed
