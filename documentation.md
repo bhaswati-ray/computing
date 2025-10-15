@@ -8,7 +8,7 @@ Day 1 — Basic Shapes and the Rasa of Courage
 
 In the first class, we learned about the setup() and draw() functions and how they create the base structure of a p5.js sketch. We experimented with simple shapes like circles, rectangles, and triangles, and learned how to apply color using the fill() function.
 
-For our first assignment, we had to translate an emotion or rasa into an abstract composition using only geometric forms. I chose the rasa of Courage, which, for me, felt like sparks , small bursts of energy that grow and spread into something larger.
+For our first assignment, we had to translate an emotion or rasa into an abstract composition using only geometric forms. I got the rasa of Courage, I wanted to do corrage of unqiueness, which for me, felt like sparks.
 
 At first, I tried using triangles because I felt their sharpness could represent the boldness and intensity of courage. But soon I realized that plotting the coordinates of triangles was much harder than I expected. No matter how I adjusted them, the sparks didn’t look the way I imagined. So I tried again.
 
