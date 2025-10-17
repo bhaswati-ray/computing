@@ -1,15 +1,15 @@
-// --- CLASS FOR BLUE RECTANGLES ---
-class RectBlue {
+// CLASS FOR RED ROCKS (SPRITE 1.png) ---
+class RectRed {
     constructor() {
         this.x = random(innerWidth);
         this.y = random(-500, -50);
-        this.w = 40; // width
-        this.h = 60; // height
-        this.speed = random(1, 3.5); 
+        // Size sprites
+        this.w = 60;
+        this.h = 80;
+        this.speed = random(1, 3.5);
         this.active = true;
     }
 
-    // This function is for LOGIC (moving the rectangle)
     move() {
         this.y += this.speed;
         if (this.y > innerHeight) {
@@ -18,22 +18,20 @@ class RectBlue {
         }
     }
 
-    // This function is for DRAWING (showing the rectangle)
+    // rains the loaded red rock sprite
     show() {
-        noStroke();
-        fill(0, 150, 255); 
-        rect(this.x, this.y, this.w, this.h, 5);
+        image(rockRedSprite, this.x, this.y, this.w, this.h);
     }
-    
+
     isClicked(mouseX, mouseY) {
         return mouseX > this.x && mouseX < this.x + this.w && mouseY > this.y && mouseY < this.y + this.h;
     }
-
+    
     handleClick() {
         this.active = false;
-        blueClicked++;
-        if (blueClicked >= 4) {
-            gameState = 3; 
+        redClicked++;
+        if (redClicked >= 4) {
+            gameState = 2;
         }
     }
 }

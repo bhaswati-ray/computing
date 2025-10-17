@@ -1,15 +1,15 @@
-// --- CLASS FOR BLUE RECTANGLES ---
+// --- CLASS FOR BLUE ROCKS (2.png) ---
 class RectBlue {
     constructor() {
         this.x = random(innerWidth);
         this.y = random(-500, -50);
-        this.w = 40; // width
-        this.h = 60; // height
+        // size. sprites
+        this.w = 60; 
+        this.h = 80;
         this.speed = random(1, 3.5); 
         this.active = true;
     }
 
-    // This function is for LOGIC (moving the rectangle)
     move() {
         this.y += this.speed;
         if (this.y > innerHeight) {
@@ -18,11 +18,9 @@ class RectBlue {
         }
     }
 
-    // This function is for DRAWING (showing the rectangle)
+    //  rains blue rock sprite
     show() {
-        noStroke();
-        fill(0, 150, 255); 
-        rect(this.x, this.y, this.w, this.h, 5);
+        image(rockBlueSprite, this.x, this.y, this.w, this.h);
     }
     
     isClicked(mouseX, mouseY) {

@@ -3,18 +3,13 @@ let gameState = 0; // 0: Start, 1: Play, 2: Dark Poem, 3: Light Poem
 let redClicked = 0;
 let blueClicked = 0;
 
-// Array to hold all falling rectangles
 const rectangles = [];
-// Decreased total number of rectangles
 const totalRects = 60; 
 
 // --- P5.JS SETUP FUNCTION ---
-// Runs once when the program starts
 function setup() {
-    // Use innerWidth and innerHeight for the canvas size
     createCanvas(innerWidth, innerHeight);
     
-    // Create and add rectangles to the array
     for (let i = 0; i < totalRects / 2; i++) {
         rectangles.push(new RectBlue());
         rectangles.push(new RectRed());
@@ -22,17 +17,15 @@ function setup() {
 }
 
 // --- P5.JS DRAW FUNCTION ---
-// Runs continuously in a loop
 function draw() {
-    // Manage game states with if-else statements
     if (gameState === 0) {
         drawStartScreen();
     } else if (gameState === 1) {
         drawGamePlay();
     } else if (gameState === 2) {
-        drawPoemScreen(true); // 'true' is a flag for the dark poem
+        drawPoemScreen(true); 
     } else if (gameState === 3) {
-        drawPoemScreen(false); // 'false' is a flag for the light poem
+        drawPoemScreen(false);
     }
 }
 
@@ -41,19 +34,16 @@ function draw() {
 function drawStartScreen() {
     background(245);
     textAlign(CENTER, CENTER);
-
     fill(0);
     textSize(64);
     textStyle(BOLD);
     text("LIFE LENS", width / 2, height / 4);
-
     stroke(0);
     strokeWeight(4);
     noFill();
     ellipse(width / 2 - 80, height / 2, 120, 120);
     ellipse(width / 2 + 80, height / 2, 120, 120);
     arc(width / 2, height / 2 - 10, 80, 40, 0, PI);
-    
     noStroke();
     fill(50);
     textSize(24);
@@ -66,17 +56,16 @@ function drawGamePlay() {
 
     // Update and display all rectangles
     for (let i = 0; i < rectangles.length; i++) {
-        // Only update and display if the rectangle's active flag is true
         if (rectangles[i].active) {
-            rectangles[i].update();
-            rectangles[i].display();
+            // Changed function calls to move() and show()
+            rectangles[i].move();
+            rectangles[i].show();
         }
     }
 }
 
 function drawPoemScreen(isDarkFlag) {
     let bgColor, textColor, poemText;
-
     if (isDarkFlag === true) {
         bgColor = color(0);
         textColor = color(255, 0, 0);
@@ -86,15 +75,12 @@ function drawPoemScreen(isDarkFlag) {
         textColor = color(0, 100, 200);
         poemText = "Through skies of doubt, a flash of blue,\nA hopeful glimmer, fresh and new.\nEach click a choice, a brighter view,\nA silver lining breaking through.";
     }
-    
     background(bgColor);
     textAlign(CENTER, CENTER);
-
     fill(textColor);
     textSize(48);
     textStyle(BOLD);
     text("Perception Shaped", width / 2, height / 3);
-
     textSize(28);
     textStyle(NORMAL);
     text(poemText, width / 2, height / 2 + 20);
@@ -110,15 +96,10 @@ function keyPressed() {
 
 function mousePressed() {
     if (gameState === 1) {
-        // This flag ensures we only process one click, even if rectangles overlap
         let clickedThisTurn = false;
-        
         for (let i = rectangles.length - 1; i >= 0; i--) {
             if (clickedThisTurn === false && rectangles[i].active === true && rectangles[i].isClicked(mouseX, mouseY)) {
-                // The object itself now handles all the logic
                 rectangles[i].handleClick();
-                
-                // Set the flag to true to stop processing more clicks this turn
                 clickedThisTurn = true;
             }
         }
