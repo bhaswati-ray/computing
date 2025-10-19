@@ -1,4 +1,4 @@
-// --- My global variables for the game ---
+// --global variables / game ---
 let gameState = 0; // 0: Start, 1: Tutorial, 2: Play, 3: Poem
 let redClicked = 0;
 let blueClicked = 0;
@@ -7,20 +7,20 @@ const rectangles = [];
 const totalRects = 60; 
 const startingRocks = 30; 
 
-// --- Variables for controlling gameplay ---
+// --- Variables gameplay ---
 let finalOutcomeIsDark = false;
-let transitionAlpha = 255; // For fade effects
+let transitionAlpha = 255; // fade effects
 
-// --- Asset variables, the loaded files ---
+// --- Asset variables
 let specsSprite, rockRedSprite, rockBlueSprite;
 let headingFont;
 
-// --- Load all my assets before the game starts ---
+// --- assets ---
 function preload() {
-    specsSprite = loadImage('art n sound/0.png');
-    rockRedSprite = loadImage('art n sound/1.png');
-    rockBlueSprite = loadImage('art n sound/2.png');
-    headingFont = loadFont('art n sound/Horizon-nMeM.ttf');
+    specsSprite = loadImage('art_n_sound/0.png');
+    rockRedSprite = loadImage('art_n_sound/1.png');
+    rockBlueSprite = loadImage('art_n_sound/2.png');
+    headingFont = loadFont('art_n_sound/Horizon-nMeM.ttf');
 }
 
 // --- Initial setup, runs once ---
@@ -31,22 +31,22 @@ function setup() {
         rectangles.push(new RectBlue());
         rectangles.push(new RectRed());
     }
-    shuffle(rectangles, true); // Shuffle them for random falling order
+    shuffle(rectangles, true); // Shuffle , random falling order
     resetRocks();
 }
 
-// --- Main game loop, runs continuously ---
+// --- Main game loop, 
 function draw() {
-    // Check which game state we're in and draw the right screen
+    // Check game state = which  screen
     if (gameState === 0) { drawStartScreen(); } 
     else if (gameState === 1) { drawTutorialScreen(); } 
     else if (gameState === 2) { drawGamePlay(); } 
     else if (gameState === 3) { drawPoemScreen(finalOutcomeIsDark); }
 }
 
-// --- All my functions for drawing the different screens ---
+// --- different screens ---
 
-// Draws the title screen
+// start screen
 function drawStartScreen() {
     background('#F5EFE6');
     if (transitionAlpha > 0) {
@@ -85,7 +85,7 @@ function drawStartScreen() {
     text("Press Any Key To Start", width / 2, height * 0.75 + (height * 0.10));
 }
 
-// the tutorial screen
+// tutorial screen
 function drawTutorialScreen() {
     background('#F5EFE6');
     textAlign(CENTER, CENTER);
