@@ -1,11 +1,14 @@
-// --- CLASS FOR BLUE ROCKS (2.png) ---
+// --- CLASS FOR BLUE ROCKS (SPRITE 2.png) ---
 class RectBlue {
     constructor() {
         this.x = random(innerWidth);
         this.y = random(-500, -50);
-        // size. sprites
-        this.w = 60; 
-        this.h = 80;
+        // Random size for each rock
+        let baseSizeW = 60;
+        let baseSizeH = 80;
+        this.w = random(baseSizeW * 0.8, baseSizeW * 1.2); 
+        this.h = random(baseSizeH * 0.8, baseSizeH * 1.2);
+        
         this.speed = random(1, 3.5); 
         this.active = true;
     }
@@ -18,7 +21,6 @@ class RectBlue {
         }
     }
 
-    //  rains blue rock sprite
     show() {
         image(rockBlueSprite, this.x, this.y, this.w, this.h);
     }
@@ -30,8 +32,5 @@ class RectBlue {
     handleClick() {
         this.active = false;
         blueClicked++;
-        if (blueClicked >= 4) {
-            gameState = 3; 
-        }
     }
 }

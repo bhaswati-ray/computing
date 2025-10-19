@@ -1,11 +1,14 @@
-// CLASS FOR RED ROCKS (SPRITE 1.png) ---
+// --- CLASS FOR RED ROCKS (SPRITE 1.png) ---
 class RectRed {
     constructor() {
         this.x = random(innerWidth);
         this.y = random(-500, -50);
-        // Size sprites
-        this.w = 60;
-        this.h = 80;
+        // Random size for each rock
+        let baseSizeW = 60;
+        let baseSizeH = 80;
+        this.w = random(baseSizeW * 0.8, baseSizeW * 1.2);
+        this.h = random(baseSizeH * 0.8, baseSizeH * 1.2);
+
         this.speed = random(1, 3.5);
         this.active = true;
     }
@@ -18,7 +21,6 @@ class RectRed {
         }
     }
 
-    // rains the loaded red rock sprite
     show() {
         image(rockRedSprite, this.x, this.y, this.w, this.h);
     }
@@ -30,8 +32,5 @@ class RectRed {
     handleClick() {
         this.active = false;
         redClicked++;
-        if (redClicked >= 4) {
-            gameState = 2;
-        }
     }
 }
