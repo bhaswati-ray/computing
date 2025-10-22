@@ -1,4 +1,4 @@
-// --- My global variables for the game ---
+// --- global variables  ---
 let gameState = 0; // 0: Start, 1: Tutorial, 2: Play, 3: Poem
 let redClicked = 0;
 let blueClicked = 0;
@@ -202,33 +202,33 @@ function drawPoemScreen(isDarkFlag) {
     text("Press Any Key", width / 2, height * 0.9);
 }
 
-// --- My new function to handle smooth sound transitions ---
+// --- smooth sound transitions ---
 function manageMusic(startShouldPlay, gameShouldPlay) {
     let fadeTime = 0.5; // half a second to fade
 
     // Only do any of this if the user has clicked/pressed a key at least once
     if (musicStarted) {
         // --- Handle Start Screen Music ---
-        // If it should be playing but isn't, fade it in
+       
         if (startShouldPlay && !startMusicPlaying) {
             startMusic.loop();
             startMusic.setVolume(1, fadeTime);
             startMusicPlaying = true; // Set flag to true
         } 
-        // If it shouldn't be playing but is, fade it out
+        // fade out
         else if (!startShouldPlay && startMusicPlaying) {
             startMusic.setVolume(0, fadeTime);
             startMusicPlaying = false; // Set flag to false
         }
 
         // --- Handle Gameplay Music ---
-        // If it should be playing but isn't, fade it in
+        // fade  in
         if (gameShouldPlay && !gameMusicPlaying) {
             gameBgMusic.loop();
             gameBgMusic.setVolume(1, fadeTime);
             gameMusicPlaying = true; // Set flag to true
         } 
-        // If it shouldn't be playing but is, fade it out
+        //  fade  out
         else if (!gameShouldPlay && gameMusicPlaying) {
             gameBgMusic.setVolume(0, fadeTime);
             gameMusicPlaying = false; // Set flag to false
@@ -236,7 +236,7 @@ function manageMusic(startShouldPlay, gameShouldPlay) {
     }
 }
 
-// --- My helper function to reset rocks for a new game ---
+// ---  reset rocks for a new game ---
 function resetRocks() {
     for (let i = 0; i < rectangles.length; i++) {
         if (i < startingRocks) {
