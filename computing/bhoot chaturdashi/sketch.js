@@ -1,653 +1,938 @@
-// BHOOT CHATURDASHI — Updated to final concept
-// 7 rooms; each room has 1 lamp, 2 diyas; ghost respects room lighting rules;
-// ghost blow-out affects adjacent rooms; K-spam minigame; 3 endings.
+// sketch.js - Single-file p5.js prototype (fixed per user requests)
+// - full game loop
+// - correct sprite looping for player (idle/walk/attack) and ghosts (walk/attack/dead)
+// - ghosts grow to 7 gradually
+// - ghosts emit pulse every GLOBAL_PULSE_INTERVAL (one chosen ghost) and blow out up to 2 lit lights
+// - ghosts die in lit glow and respawn after 10s
+// - magnet pull is strict: player must Q-spam SPAM_TARGET in SPAM_WINDOW to avoid losing a life
+// - Q presses queue full attack animation loops; while spamming player plays attack anim(s)
+// - ghosts cannot enter lit glow and are repelled; when any lights are lit ghosts slow/freeze (configurable)
+// - full single-file, no external fragments
 
-// -------- CONFIG --------
-const ROOMS = 7;
-const DIYAS_PER_ROOM = 2;
+// ---------- CONFIG ----------
+const DIYA_COUNT = 14;
+const LAMP_COUNT = 5;
+const TOTAL_LIGHTS = DIYA_COUNT + LAMP_COUNT;
 
-const ROOM_W = 120;
-const ROOM_H = 300;
-const ROOM_MARGIN = 14;
-const START_X = 40;
-const START_Y = 100;
-
-const PLAYER_SIZE = 18;
-const PLAYER_SPEED = 220; // px/sec
-
+const GHOST_START = 3;
+const GHOST_MAX = 7;
+const GHOST_SPAWN_INTERVAL = 9000; // spawn one ghost every 9s until max (tuned)
+const GLOBAL_PULSE_INTERVAL = 40000; // 40s: pick 1 ghost to pulse/blow lights
 const SPAM_TARGET = 10;
-const SPAM_WINDOW = 5000; // ms
+const SPAM_WINDOW = 5000; // ms to hit SPAM_TARGET
+const START_TINT = 0.7; // 70% darkness
+const ATTACHED_PULL_STRENGTH = 0.28; // lerp strength for pulling
+const GHOST_FREEZE_SPEED_FACTOR = 0.08; // when any light lit, ghosts slow to this factor (almost freeze)
 
-const GHOST_BLOW_MIN = 6000; // ms
-const GHOST_BLOW_MAX = 12000; // ms
+// ---------- ASSETS ----------
+let roomImg, diyaImg, lampImg;
+let playerIdle, playerWalk, playerAttack;
+let ghostWalkImg, ghostAttackImg, ghostDeadImg;
 
-// -------- STATE & ARRAYS --------
-let rooms = [];
-let player;
-let ghost;
-let pulses = []; // visual pulses when blow happens
+// frames per sprite sheet
+let IDLE_FRAMES = 1, WALK_FRAMES = 1, ATTACK_FRAMES = 1;
+let GHOST_WALK_FRAMES = 1, GHOST_ATTACK_FRAMES = 1, GHOST_DEAD_FRAMES = 1;
 
-let gameState = 0; // 0 intro, 1 gameplay, 2 ending
-let endingType = null; // 'memory' | 'knowledge' | 'balanced'
+// ---------- LAYOUT ----------
+let imgScale = 1, imgDrawX = 0, imgDrawY = 0;
+let roomW = 0, roomH = 0;
 
-let isSpamming = false;
+// ---------- GAME STATE ----------
+let gameState = 2; // 0 start, 2 play, 3 diya-win, 4 full-win, 5 lamps-only (knowledge), 6 game over
+let lastTime = 0;
+
+// ---------- PLAYER ----------
+let player = { x: 0, y: 0, speed: 160, size: 56, lives: 3 };
+let anim = {
+  mode: 'idle',    // 'idle' | 'walk' | 'attack'
+  frame: 0,        // float frame index
+  fps: 8,
+  facing: 1,       // 1 = right, -1 = left
+  attackQueue: 0,  // number of full attack loops queued
+  attackPlaying: false
+};
+
+// ---------- LIGHTS ----------
+let lights = []; // {x,y,type:'diya'|'lamp',isLit,pulsePhase}
+const LIGHT_RANGE = 96; // interact radius
+
+// ---------- GHOSTS ----------
+let ghosts = [];
+let pulses = [];
+let nextGlobalPulse = 0;
+let lastGhostAdd = 0;
+
+// ---------- PULL / SPAM ----------
+let attachedGhost = null;
 let spamCount = 0;
 let spamStart = 0;
+let spamSuccess = false;
 
-let lastEvalTime = 0;
-
-// -------- CLASSES --------
-class Diya {
-  constructor(x,y,id){
-    this.x = x; this.y = y; this.r = 7;
-    this.isLit = false;
-    this.memId = id; // index for memory fragments if needed
-  }
-  draw(){
-    noStroke();
-    if (this.isLit){
-      fill(255,160,80);
-      ellipse(this.x,this.y,this.r*2+2);
-      fill(255,230,140);
-      ellipse(this.x,this.y-6,6,10);
-    } else {
-      fill(50);
-      ellipse(this.x,this.y,this.r*2);
-    }
+// ---------- robust loader util ----------
+function tryLoadMany(candidates, onLoaded, onFail){
+  let loaded = false;
+  let remaining = candidates.length;
+  for (let p of candidates){
+    loadImage(p,
+      (img) => { if (!loaded){ loaded = true; onLoaded(img,p); } },
+      () => { remaining--; if (remaining === 0 && !loaded) onFail(); }
+    );
   }
 }
 
-class Lamp {
-  constructor(x,y){
-    this.x = x; this.y = y; this.w = 20; this.h = 36;
-    this.isOn = false;
-  }
-  draw(){
-    rectMode(CENTER);
-    fill(this.isOn ? color(255,240,200) : color(60));
-    rect(this.x,this.y,this.w,this.h,3);
-    fill(this.isOn ? color(255,220,120) : color(30));
-    ellipse(this.x,this.y - this.h/2 - 6,8,8);
+function preload(){
+  // background room
+  roomImg = loadImage('assets/room.png');
+
+  // lights
+  tryLoadMany(['assets/diya.png','assets/Diya.png','assets/diya.PNG'],
+    (img,p)=>{ diyaImg = img; }, ()=>{ diyaImg = null; });
+  tryLoadMany(['assets/lamp.png','assets/Lamp.png','assets/lamp.PNG'],
+    (img,p)=>{ lampImg = img; }, ()=>{ lampImg = null; });
+
+  // player
+  tryLoadMany(['assets/Idle.png','assets/idle.png','assets/player_idle.png'],
+    (img,p)=>{ playerIdle = img; }, ()=>{ playerIdle = null; });
+  tryLoadMany(['assets/Walk.png','assets/walk.png','assets/player_walk.png'],
+    (img,p)=>{ playerWalk = img; }, ()=>{ playerWalk = null; });
+  tryLoadMany(['assets/Attack.png','assets/attack.png','assets/player_attack.png'],
+    (img,p)=>{ playerAttack = img; }, ()=>{ playerAttack = null; });
+
+  // ghost
+  tryLoadMany(['assets/ghost walk.png','assets/ghost_walk.png','assets/ghost_walk.PNG','assets/ghostwalk.png'],
+    (img,p)=>{ ghostWalkImg = img; }, ()=>{ ghostWalkImg = null; });
+  tryLoadMany(['assets/ghost attack.png','assets/ghost_attack.png','assets/ghost_attack.PNG','assets/ghostattack.png'],
+    (img,p)=>{ ghostAttackImg = img; }, ()=>{ ghostAttackImg = null; });
+  tryLoadMany(['assets/ghost dead.png','assets/ghost_dead.png','assets/ghost_dead.PNG','assets/ghostdead.png'],
+    (img,p)=>{ ghostDeadImg = img; }, ()=>{ ghostDeadImg = null; });
+}
+
+// ---------- setup ----------
+function setup(){
+  createCanvas(windowWidth, windowHeight);
+  imageMode(CENTER); rectMode(CENTER);
+  textFont('Georgia');
+
+  roomW = roomImg.width; roomH = roomImg.height;
+  computeImagePlacement();
+
+  player.x = imgDrawX + roomW*imgScale/2;
+  player.y = imgDrawY + roomH*imgScale/2;
+  player.lives = 3;
+
+  detectFrames();
+  placeLightsGrid();
+  spawnGhostPool(GHOST_START);
+
+  lastGhostAdd = millis() + GHOST_SPAWN_INTERVAL;
+  nextGlobalPulse = millis() + GLOBAL_PULSE_INTERVAL;
+  lastTime = millis();
+  gameState = 2;
+}
+
+function computeImagePlacement(){
+  const rw = roomImg.width, rh = roomImg.height;
+  imgScale = min(width / rw, height / rh);
+  imgDrawX = (width - rw * imgScale) / 2;
+  imgDrawY = (height - rh * imgScale) / 2;
+}
+
+function detectSheetFrames(img){
+  if (!img || !img.width || !img.height) return 1;
+  let frames = floor(img.width / img.height);
+  return max(1, frames);
+}
+function detectFrames(){
+  IDLE_FRAMES = detectSheetFrames(playerIdle);
+  WALK_FRAMES = detectSheetFrames(playerWalk);
+  ATTACK_FRAMES = detectSheetFrames(playerAttack);
+  GHOST_WALK_FRAMES = detectSheetFrames(ghostWalkImg);
+  GHOST_ATTACK_FRAMES = detectSheetFrames(ghostAttackImg);
+  GHOST_DEAD_FRAMES = detectSheetFrames(ghostDeadImg);
+}
+
+// ---------- lights placement ----------
+function placeLightsGrid(){
+  lights = [];
+  const cols = 7;
+  const left = imgDrawX + (roomW*imgScale) * 0.08;
+  const right = imgDrawX + (roomW*imgScale) * 0.92;
+  const gap = (right - left) / (cols - 1);
+  const topY = imgDrawY + (roomH*imgScale) * 0.30;
+  const midY = imgDrawY + (roomH*imgScale) * 0.50;
+  const bottomY = imgDrawY + (roomH*imgScale) * 0.70;
+
+  for (let c=0;c<cols;c++) lights.push({ x:left + c*gap, y:topY, type:'diya', isLit:false, pulsePhase:random(0,TWO_PI) });
+  for (let c=0;c<cols;c++) lights.push({ x:left + c*gap, y:bottomY, type:'diya', isLit:false, pulsePhase:random(0,TWO_PI) });
+
+  const lampCols = [0,2,3,4,6];
+  for (let i=0;i<lampCols.length;i++){
+    const c = lampCols[i];
+    lights.push({ x:left + c*gap, y:midY, type:'lamp', isLit:false, pulsePhase:0 });
   }
 }
 
-class Room {
-  constructor(i, x, y, w, h){
-    this.id = i; this.x = x; this.y = y; this.w = w; this.h = h;
-    this.lamp = new Lamp(this.x + this.w - 30, this.y + 36);
-    this.diyas = [];
-    for (let d=0; d<DIYAS_PER_ROOM; d++){
-      this.diyas.push(new Diya(this.x + 18 + d*24, this.y + this.h - 40, i*DIYAS_PER_ROOM + d));
-    }
-    this.visited = false;
-  }
-  lightLevel(){
-    // per your rules:
-    // 2 -> lamp on OR 2 diyas lit
-    // 1 -> exactly one diya lit
-    // 0 -> none
-    if (this.lamp.isOn) return 2;
-    const lit = this.diyas.filter(d=>d.isLit).length;
-    return lit; // 0,1,2
-  }
-  draw(){
-    // room background
-    push();
-    stroke(90);
-    fill(20);
-    rect(this.x,this.y,this.w,this.h,8);
-    pop();
-    // draw lamp and diyas
-    this.lamp.draw();
-    for (let d of this.diyas) d.draw();
-  }
-}
-
-class Player {
-  constructor(x,y){
-    this.x = x; this.y = y; this.size = PLAYER_SIZE;
-    this.roomIndex = 0;
-  }
-  draw(){
-    rectMode(CENTER);
-    fill(120,200,255);
-    rect(this.x,this.y,this.size,this.size);
-  }
-  update(dt){
-    let vx=0, vy=0;
-    if (keyIsDown(LEFT_ARROW) || keyIsDown(65)) vx -= 1;
-    if (keyIsDown(RIGHT_ARROW) || keyIsDown(68)) vx += 1;
-    if (keyIsDown(UP_ARROW) || keyIsDown(87)) vy -= 1;
-    if (keyIsDown(DOWN_ARROW) || keyIsDown(83)) vy += 1;
-    if (vx!==0 || vy!==0){
-      const mag = sqrt(vx*vx + vy*vy);
-      vx/=mag; vy/=mag;
-      this.x += vx * PLAYER_SPEED * dt;
-      this.y += vy * PLAYER_SPEED * dt;
-      // clamp
-      this.x = constrain(this.x, 0, width);
-      this.y = constrain(this.y, 0, height);
-    }
-    // update room index
-    for (let i=0;i<rooms.length;i++){
-      const r = rooms[i];
-      if (this.x >= r.x && this.x <= r.x + r.w) {
-        this.roomIndex = i; r.visited = true; break;
-      }
-    }
-  }
-  distTo(obj){
-    return dist(this.x,this.y,obj.x,obj.y);
-  }
-}
-
+// ---------- Ghost class ----------
 class Ghost {
   constructor(x,y){
-    this.x = x; this.y = y; this.r = 16;
-    this.speed = 40;
-    this.blowTimer = millis() + random(GHOST_BLOW_MIN, GHOST_BLOW_MAX);
-    this.active = true;
+    this.x = x; this.y = y;
+    this.r = max(24, 0.08 * min(width, height));
+    this.baseSpeed = random(28, 56);
+    this.speed = this.baseSpeed;
+    this.alive = true;
+    this.state = 'walk'; // 'walk'|'attack'|'dead'
+    this.wanderTarget = this.randomTarget();
+    this.pulseRadius = 0.30 * min(width, height);
+    this.respawnAt = 0;
+    this.walkAnimFrame = random(0, GHOST_WALK_FRAMES);
+    this.attackAnimFrame = 0;
+    this.attached = false;
+    this.nextPulseDue = millis() + random(15000, 30000);
   }
+
+  randomTarget(){
+    const left = imgDrawX + this.r; const right = imgDrawX + roomW*imgScale - this.r;
+    const top = imgDrawY + this.r; const bottom = imgDrawY + roomH*imgScale - this.r;
+    return { x: random(left, right), y: random(top, bottom) };
+  }
+
+  clampToBounds(){
+    const left = imgDrawX + this.r; const right = imgDrawX + roomW*imgScale - this.r;
+    const top = imgDrawY + this.r; const bottom = imgDrawY + roomH*imgScale - this.r;
+    this.x = constrain(this.x, left, right);
+    this.y = constrain(this.y, top, bottom);
+  }
+
+  // returns true if within any lit glow radius (i.e., lit area)
+  isWithinAnyLightGlow(){
+    for (let L of lights){
+      if (!L.isLit) continue;
+      let glowR = (L.type === 'lamp') ? 0.32 * min(width, height) : 0.28 * min(width, height);
+      if (dist(this.x, this.y, L.x, L.y) <= glowR) return true;
+    }
+    return false;
+  }
+
+  // ghost is able to operate only in dark
+  isInDarkArea(){
+    return !this.isWithinAnyLightGlow();
+  }
+
+  avoidLitVector(){
+    let ax = 0, ay = 0;
+    for (let L of lights){
+      if (!L.isLit) continue;
+      let d = dist(this.x, this.y, L.x, L.y);
+      if (d < this.pulseRadius){
+        let vx = this.x - L.x, vy = this.y - L.y;
+        let inv = 1 / max(d, 1);
+        ax += vx * inv; ay += vy * inv;
+      }
+    }
+    let mag = sqrt(ax*ax + ay*ay) || 1;
+    return { x: ax/mag, y: ay/mag };
+  }
+
+  repelFromLightsCheck(){
+    for (let L of lights){
+      if (!L.isLit) continue;
+      let glowR = (L.type === 'lamp') ? 0.32 * min(width, height) : 0.28 * min(width, height);
+      let d = dist(this.x, this.y, L.x, L.y);
+      if (d < glowR * 0.95){
+        // push away instantly (strong)
+        let vx = this.x - L.x, vy = this.y - L.y; let inv = 1 / max(d, 1);
+        this.x += vx * inv * 6;
+        this.y += vy * inv * 6;
+        this.clampToBounds();
+      }
+    }
+  }
+
   update(dt){
-    // choose target: nearest room with lightLevel 0 (dark). If none, then nearest room with level 1.
-    let darkRooms = rooms.filter(r => r.lightLevel() === 0);
-    let weakRooms = rooms.filter(r => r.lightLevel() === 1);
-    let targetRoom = null;
-    if (darkRooms.length > 0){
-      // pick nearest dark room center
-      let bestD = 1e9;
-      for (let r of darkRooms){
-        const cx = r.x + r.w/2, cy = r.y + r.h/2;
-        const d = dist(this.x,this.y,cx,cy);
-        if (d < bestD){ bestD = d; targetRoom = r; bestD = d; }
-      }
-    } else if (weakRooms.length > 0){
-      let bestD = 1e9;
-      for (let r of weakRooms){
-        const cx = r.x + r.w/2, cy = r.y + r.h/2;
-        const d = dist(this.x,this.y,cx,cy);
-        if (d < bestD){ bestD = d; targetRoom = r; bestD = d; }
-      }
-    } else {
-      // nowhere to be; fade near boundary, drift slowly
-      this.x += random(-0.2,0.2) * dt * 60;
-      this.y += random(-0.2,0.2) * dt * 60;
-      targetRoom = null;
+    if (!this.alive && this.respawnAt > 0 && millis() >= this.respawnAt){
+      this.alive = true; this.state = 'walk'; this.respawnAt = 0; this.wanderTarget = this.randomTarget(); this.attached = false;
+    }
+    if (!this.alive) return;
+    if (this.state === 'dead') {
+      if (this.respawnAt === 0) this.respawnAt = millis() + 10000; // ensure timer set
+      return;
     }
 
-    if (targetRoom){
-      // ensure we do not enter rooms with lightLevel >=2
-      // if targetRoom has level >=2, instead drift around edge (shouldn't happen since filter above)
-      // move toward center but stop if room is strongly lit
-      const cx = targetRoom.x + targetRoom.w/2, cy = targetRoom.y + targetRoom.h/2;
-      const dx = cx - this.x, dy = cy - this.y;
-      const d = sqrt(dx*dx + dy*dy);
-      if (d > 1){
-        // speed scales: stronger when more dark rooms exist
-        const darkCount = rooms.filter(r=>r.lightLevel()===0).length;
-        const sp = this.speed * (1 + 0.08 * darkCount);
-        this.x += (dx/d) * sp * dt;
-        this.y += (dy/d) * sp * dt;
+    // If attached, do not wander (pull behavior is handled externally)
+    if (this.attached) return;
+
+    // dynamic speed: freeze/slow if any lights lit (global freeze)
+    const someLit = lights.some(l => l.isLit);
+    let speedFactor = someLit ? GHOST_FREEZE_SPEED_FACTOR : 1;
+    let curSpeed = this.baseSpeed * speedFactor;
+
+    // wander with avoid influence
+    let dx = this.wanderTarget.x - this.x, dy = this.wanderTarget.y - this.y;
+    let d = sqrt(dx*dx + dy*dy);
+    if (d < 12) this.wanderTarget = this.randomTarget();
+    else {
+      dx /= d; dy /= d;
+      let avoid = this.avoidLitVector();
+      dx += avoid.x * 1.6; dy += avoid.y * 1.6;
+      let mag = sqrt(dx*dx + dy*dy) || 1;
+      this.x += (dx/mag) * curSpeed * dt;
+      this.y += (dy/mag) * curSpeed * dt;
+      this.clampToBounds();
+    }
+
+    // if accidentally inside a very close lit area -> die
+    for (let L of lights){
+      if (!L.isLit) continue;
+      let deathR = player.size * 1.0;
+      if (dist(this.x, this.y, L.x, L.y) <= deathR){
+        this.kill('light');
+        return;
       }
     }
 
-    // clamp inside play area
-    this.x = constrain(this.x, 10, width - 10);
-    this.y = constrain(this.y, 10, height - 10);
+    // repel if too close to glow
+    this.repelFromLightsCheck();
 
-    // blow-out timer
-    if (millis() > this.blowTimer){
-      this.blowTimer = millis() + random(GHOST_BLOW_MIN, GHOST_BLOW_MAX);
-      this.blowOutAdjacent();
+    // scheduled independent pulse (backup if global missed)
+    if (millis() > this.nextPulseDue){
+      this.nextPulseDue = millis() + random(35000, 50000);
+      if (this.isInDarkArea()) this.emitPulse();
     }
   }
 
-  blowOutAdjacent(){
-    // find nearest room index to ghost
-    let idx = 0; let bestD = 1e9;
-    for (let i=0;i<rooms.length;i++){
-      const r = rooms[i];
-      const cx = r.x + r.w/2, cy = r.y + r.h/2;
-      const d = dist(this.x,this.y,cx,cy);
-      if (d < bestD){ bestD = d; idx = i; }
+  emitPulse(){
+    pulses.push(new Pulse(this.x, this.y, this.pulseRadius));
+    let litCandidates = lights.filter(l => l.isLit && dist(this.x,this.y,l.x,l.y) <= this.pulseRadius*1.05);
+    litCandidates.sort((a,b) => dist(this.x,this.y,a.x,a.y) - dist(this.x,this.y,b.x,b.y));
+    let toBlow = min(2, litCandidates.length);
+    for (let i=0;i<toBlow;i++){
+      litCandidates[i].isLit = false;
+      pulses.push(new Pulse(litCandidates[i].x, litCandidates[i].y, 0.08 * min(width,height), true));
     }
-    // pick one adjacent index (left or right) if exists
-    let choices = [];
-    if (idx > 0) choices.push(idx-1);
-    if (idx < rooms.length - 1) choices.push(idx+1);
-    if (choices.length === 0) return;
-    const targetIdx = random(choices);
-    const targetRoom = rooms[targetIdx];
+  }
 
-    // blow out one random lit diya in that target room (if any)
-    const litDiyas = targetRoom.diyas.filter(d=>d.isLit);
-    if (litDiyas.length > 0){
-      const choice = random(litDiyas);
-      // blow out with high probability
-      if (random() < 0.9){
-        choice.isLit = false;
-        pulses.push(new Pulse(choice.x, choice.y));
-      }
-    } else {
-      // if no diya to blow, do nothing (ghost can't blow lamp)
-      // slight visual pulse at center of room anyway
-      pulses.push(new Pulse(targetRoom.x + targetRoom.w/2, targetRoom.y + targetRoom.h/2));
-    }
+  kill(by='player'){
+    this.state = 'dead';
+    this.alive = false;
+    this.attached = false;
+    this.respawnAt = millis() + 10000; // 10s respawn
+    pulses.push(new Pulse(this.x, this.y, 0.12 * min(width,height), true));
+    if (attachedGhost === this){ attachedGhost = null; resetSpam(); }
   }
 
   draw(){
-    // ghost fades in lit areas (if ghost sits in a room where lightLevel >=2, it should not exist there)
-    // we clip visibility when overlapping fully lit rooms when rendering world; caller will compute
-    push();
-    noStroke();
-    fill(220,90,160, 200);
-    ellipse(this.x, this.y, this.r*2);
-    pop();
+    if (!this.alive) return;
+    if (this.state === 'dead'){
+      if (ghostDeadImg) drawSheetFrame(ghostDeadImg, 0, GHOST_DEAD_FRAMES, this.x, this.y, false, this.r*1.6);
+      else { push(); noStroke(); fill(140,40,160,160); ellipse(this.x, this.y, this.r*2); pop(); }
+      return;
+    }
+
+    if (this.attached && ghostAttackImg){
+      this.attackAnimFrame = (this.attackAnimFrame + 0.28) % max(1, GHOST_ATTACK_FRAMES);
+      drawSheetFrame(ghostAttackImg, floor(this.attackAnimFrame), GHOST_ATTACK_FRAMES, this.x, this.y, false, this.r*1.6);
+      return;
+    }
+
+    if (ghostWalkImg){
+      this.walkAnimFrame = (this.walkAnimFrame + 0.12) % max(1, GHOST_WALK_FRAMES);
+      drawSheetFrame(ghostWalkImg, floor(this.walkAnimFrame), GHOST_WALK_FRAMES, this.x, this.y, false, this.r*1.6);
+    } else {
+      push(); noStroke(); fill(220,90,160,200); ellipse(this.x,this.y,this.r*2); fill(255); ellipse(this.x - this.r*0.32, this.y - this.r*0.22, this.r*0.36); ellipse(this.x + this.r*0.12, this.y - this.r*0.22, this.r*0.28); pop();
+    }
   }
 }
 
+// Pulse visual
 class Pulse {
-  constructor(x,y){
-    this.x = x; this.y = y; this.t = 0; this.duration = 600;
-  }
-  update(dt){
-    this.t += dt*1000;
-  }
-  draw(){
-    push();
-    noFill();
-    stroke(210,180,150, map(1 - this.t/this.duration, 0, 1, 0, 220));
-    strokeWeight(2);
-    const s = map(this.t, 0, this.duration, 0, 160);
-    ellipse(this.x, this.y, s);
-    pop();
-  }
-  done(){ return this.t > this.duration; }
+  constructor(x,y,maxR, quick=false){ this.x=x; this.y=y; this.maxR=maxR; this.t=0; this.dur = quick?600:1200; }
+  update(dt){ this.t += dt*1000; }
+  draw(){ let prog = constrain(this.t/this.dur,0,1); let r = this.maxR * prog; push(); noFill(); stroke(255,200,100, map(1-prog,0,1,20,200)); strokeWeight(2); ellipse(this.x,this.y,r*2); pop(); }
+  done(){ return this.t > this.dur; }
 }
 
-// -------- SETUP & RESET --------
-function setup(){
-  createCanvas(1000, 480);
-  resetGame();
-  textFont('Georgia');
+// ---------- spawn ----------
+function spawnGhostPool(n){
+  ghosts = [];
+  for (let i=0;i<n;i++) spawnOneGhost();
+}
+function spawnOneGhost(){
+  const gx = random(imgDrawX + 60, imgDrawX + roomW*imgScale - 60);
+  const gy = random(imgDrawY + 60, imgDrawY + roomH*imgScale - 60);
+  let g = new Ghost(gx, gy);
+  g.r = player.size * 1.0;
+  ghosts.push(g);
+  return g;
 }
 
-function resetGame(){
-  rooms = [];
-  pulses = [];
-  // create 7 rooms in a row
-  for (let i=0;i<ROOMS;i++){
-    const rx = START_X + i * (ROOM_W + ROOM_MARGIN);
-    rooms.push(new Room(i, rx, START_Y, ROOM_W, ROOM_H));
-  }
-  // player starts in first room center
-  player = new Player(rooms[0].x + rooms[0].w/2, rooms[0].y + rooms[0].h/2);
-  // ghost starts at last room center
-  ghost = new Ghost(rooms[ROOMS-1].x + rooms[ROOMS-1].w/2, rooms[ROOMS-1].y + rooms[ROOMS-1].h/2);
-  isSpamming = false; spamCount = 0; spamStart = 0; endingType = null;
-  gameState = 0;
-  lastEvalTime = millis();
-}
-
-// -------- DRAW LOOP --------
-let last = 0;
+// ---------- main draw ----------
 function draw(){
   const now = millis();
-  const dt = (last === 0) ? 0.016 : (now - last) / 1000;
-  last = now;
+  const dt = lastTime === 0 ? 1/60 : (now - lastTime)/1000;
+  lastTime = now;
 
   background(12);
 
-  if (gameState === 0){
-    drawIntro();
-    return;
+  // screens
+  if (gameState === 0){ drawStart(); return; }
+  if (gameState === 3){ drawWin('Diya memories unlocked — you honoured them'); return; }
+  if (gameState === 4){ drawWin('Both memory & knowledge unlocked — special memory'); return; }
+  if (gameState === 5){ drawWin('Light of knowledge — you questioned and learned'); return; }
+  if (gameState === 6){ drawGameOver(); return; }
+
+  // draw room centered & scaled
+  push(); translate(imgDrawX, imgDrawY); scale(imgScale); image(roomImg, roomImg.width/2, roomImg.height/2, roomImg.width, roomImg.height); pop();
+
+  // spawn ghosts gradually up to GHOST_MAX
+  if (millis() > lastGhostAdd && ghosts.length < GHOST_MAX){
+    lastGhostAdd = millis() + GHOST_SPAWN_INTERVAL;
+    spawnOneGhost();
   }
 
-  // update
-  player.update(dt);
-  ghost.update(dt);
-
-  // enforce ghost cannot exist inside fully lit rooms (if it enters, nudge it out)
-  enforceGhostPresence();
-
-  // update pulses
-  for (let p of pulses) p.update(dt);
-  pulses = pulses.filter(p=>!p.done());
-
-  // K-SPAM check: if ghost close and player's room lightLevel <=1 and not already spamming
-  const distPG = dist(player.x, player.y, ghost.x, ghost.y);
-  const playerRoom = rooms[player.roomIndex];
-  const playerLight = playerRoom.lightLevel();
-  if (!isSpamming && distPG < 48 && playerLight <= 1 && gameState === 1){
-    startSpam();
-  }
-
-  // draw rooms and their contents
-  for (let r of rooms) r.draw();
-
-  // draw lighting overlays (lamps and diyas)
-  for (let r of rooms){
-    if (r.lamp.isOn) drawLight(r.lamp.x, r.lamp.y - 12, 160, 200);
-    for (let d of r.diyas) if (d.isLit) drawLight(d.x, d.y - 2, 70, 140);
-  }
-
-  // draw pulses
-  for (let p of pulses) p.draw();
-
-  // draw ghost but fade/avoid rendering inside fully lit rooms: if ghost is currently inside region of lightLevel>=2, fade
-  let ghostRoomIdx = ghostRoomIndex();
-  let ghostVisible = true;
-  if (ghostRoomIdx !== null){
-    let lv = rooms[ghostRoomIdx].lightLevel();
-    if (lv >= 2) ghostVisible = false; // ghost cannot exist there
-  }
-  // If player's choice allows ghost to linger at edges when lightLevel==1, ghost can be near edges
-  if (ghostVisible) ghost.draw();
-
-  // draw player
-  player.draw();
-
-  // draw UI
-  drawUI();
-
-  // check completion: when all rooms visited and some time passed OR when all diyas/lamp configuration done
-  // We'll evaluate after a short buffer so the player sees final state
-  if (millis() - lastEvalTime > 300 && gameState === 1){
-    const allVisited = rooms.every(r => r.visited);
-    if (allVisited) {
-      evaluateEnding();
+  // global pulse: every GLOBAL_PULSE_INTERVAL pick 1-2 ghosts in dark and make them pulse
+  if (millis() > nextGlobalPulse){
+    nextGlobalPulse = millis() + GLOBAL_PULSE_INTERVAL;
+    let pool = ghosts.filter(g => g.alive && g.state !== 'dead' && g.isInDarkArea());
+    if (pool.length > 0){
+      // pick 1 or 2 ghosts
+      let picks = min(pool.length, random() < 0.35 ? 2 : 1);
+      shuffle(pool, true);
+      for (let i=0;i<picks;i++){
+        pool[i].emitPulse();
+      }
     }
   }
-}
 
-// -------- HELPERS & INTERACTIONS --------
-function drawIntro(){
-  push();
-  fill(255);
-  textAlign(CENTER);
-  textSize(26);
-  text("BHOOT CHATURDASHI", width/2, height/2 - 50);
-  textSize(14);
-  text("Press any key to begin — sip your tea, watch Diwali outside, then the call: 'Light your rooms.'", width/2, height/2 - 20);
-  pop();
-}
-
-// toggle lamp when pressing SPACE near lamp; light nearest diya with 'A'
-function keyPressed(){
-  if (gameState === 0){
-    gameState = 1; lastEvalTime = millis();
-    return;
-  }
-  if (isSpamming){
-    if (key.toLowerCase() === 'k'){
-      spamCount++;
-      if (spamCount >= SPAM_TARGET) resolveSpamSuccess();
-    }
-    return;
-  }
-  if (gameState === 1){
-    if (key === ' '){
-      // toggle lamp if close
-      const r = rooms[player.roomIndex];
-      const L = r.lamp;
-      if (dist(player.x, player.y, L.x, L.y) < 36){
-        L.isOn = !L.isOn;
-        // immediate effect: if lamp turned on, ghost cannot exist in that room
-        // small hint
-      }
-    } else if (key.toLowerCase() === 'a'){
-      // light nearest diya if in range
-      let nearest = null; let md = 1e9;
-      for (let d of rooms[player.roomIndex].diyas){
-        const dd = dist(player.x, player.y, d.x, d.y);
-        if (dd < md){ md = dd; nearest = d; }
-      }
-      if (nearest && md < 36 && !nearest.isLit){
-        nearest.isLit = true;
-        // memory reveal could be queued here
-      }
-    } else if (key.toLowerCase() === 'r'){
-      resetGame();
-    }
-  } else if (gameState === 2){
-    if (key.toLowerCase() === 'r') resetGame();
-  }
-}
-
-// small radial light drawing
-function drawLight(cx, cy, radius, alpha){
-  push();
-  const g = drawingContext;
-  const grad = g.createRadialGradient(cx, cy, 0, cx, cy, radius);
-  grad.addColorStop(0, `rgba(255,220,150,${alpha/255})`);
-  grad.addColorStop(0.6, `rgba(90,50,20,${alpha/600})`);
-  grad.addColorStop(1, `rgba(0,0,0,0)`);
-  g.fillStyle = grad;
-  g.beginPath();
-  g.arc(cx, cy, radius, 0, TWO_PI);
-  g.fill();
-  pop();
-}
-
-// determine which room index ghost is currently inside (null if none)
-function ghostRoomIndex(){
-  for (let i=0;i<rooms.length;i++){
-    const r = rooms[i];
-    if (ghost.x >= r.x && ghost.x <= r.x + r.w && ghost.y >= r.y && ghost.y <= r.y + r.h) return i;
-  }
-  return null;
-}
-
-// ensure ghost doesn't stay inside fully lit rooms
-function enforceGhostPresence(){
-  const idx = ghostRoomIndex();
-  if (idx !== null){
-    const lv = rooms[idx].lightLevel();
-    if (lv >= 2){
-      // nudge ghost away: move to nearest allowed room (left or right)
-      // find nearest room with level < 2
-      let targetIdx = null; let bestD = 1e9;
-      for (let i=0;i<rooms.length;i++){
-        if (rooms[i].lightLevel() < 2){
-          const cx = rooms[i].x + rooms[i].w/2;
-          const d = abs(i - idx);
-          if (d < bestD){ bestD = d; targetIdx = i; }
-        }
-      }
-      if (targetIdx !== null){
-        // teleport gently to target room edge
-        const rt = rooms[targetIdx];
-        // place ghost near center of target room
-        ghost.x = rt.x + rt.w/2 + random(-20,20);
-        ghost.y = rt.y + rt.h/2 + random(-20,20);
-      } else {
-        // nowhere allowed -> fade position out to outside
-        ghost.x = constrain(ghost.x + random(-10,10), 10, width-10);
-        ghost.y = constrain(ghost.y + random(-10,10), 10, height-10);
-      }
-    } else if (lv === 1){
-      // linger near edge: gently push ghost to nearest room edge
-      const r = rooms[idx];
-      const cx = r.x + r.w/2;
-      const leftEdge = r.x - 10, rightEdge = r.x + r.w + 10;
-      const edgeX = (ghost.x < cx) ? leftEdge : rightEdge;
-      ghost.x = lerp(ghost.x, edgeX, 0.06);
-    }
-  }
-}
-
-// K-SPAM handling
-function startSpam(){
-  isSpamming = true;
-  spamCount = 0;
-  spamStart = millis();
-}
-
-function resolveSpamSuccess(){
-  isSpamming = false;
-  // reward: reduce ghost speed and light-up a small nearby diya sometimes
-  ghost.speed = max(20, ghost.speed * 0.85);
-  // light nearest unlit diya in player's room if any
-  const r = rooms[player.roomIndex];
-  const candidates = r.diyas.filter(d => !d.isLit);
-  if (candidates.length > 0 && random() < 0.6){
-    random(candidates).isLit = true;
-  }
-}
-
-function resolveSpamFail(){
-  isSpamming = false;
-  // penalty: increase ghost speed and maybe blow out a random lit diya globally
-  ghost.speed *= 1.12;
-  const lit = [];
-  for (let rr of rooms) for (let d of rr.diyas) if (d.isLit) lit.push(d);
-  if (lit.length > 0) {
-    random(lit).isLit = false;
-  }
-}
-
-// evaluate ending logic
-function evaluateEnding(){
-  lastEvalTime = millis();
-  // count lamps vs diyas
-  const lampCount = rooms.filter(r=>r.lamp.isOn).length;
-  const diyaCount = rooms.reduce((sum, r)=> sum + r.diyas.filter(d=>d.isLit).length, 0);
-  // determine thresholds
-  if (diyaCount > lampCount * 1.2) endingType = 'memory';
-  else if (lampCount > diyaCount * 1.2) endingType = 'knowledge';
-  else endingType = 'balanced';
-  gameState = 2; // move to ending state
-}
-
-// draw UI
-function drawUI(){
-  push();
-  fill(255);
-  textAlign(LEFT);
-  textSize(13);
-  const lampCount = rooms.filter(r=>r.lamp.isOn).length;
-  const diyaCount = rooms.reduce((sum, r)=> sum + r.diyas.filter(d=>d.isLit).length, 0);
-  text(`Room ${player.roomIndex + 1}/${ROOMS}`, 10, 18);
-  text(`Lamps: ${lampCount}`, 10, 36);
-  text(`Diyas: ${diyaCount}`, 10, 54);
-  if (isSpamming){
-    // show spam UI
-    textAlign(CENTER);
-    textSize(16);
-    text(`K-SPAM! Press K rapidly: ${spamCount}/${SPAM_TARGET}`, width/2, 24);
-    // check timeout
-    if (millis() - spamStart > SPAM_WINDOW) {
-      resolveSpamFail();
-    }
+  // movement input (unless pulled)
+  let mvx = 0, mvy = 0;
+  if (!attachedGhost){
+    if (keyIsDown(65) || keyIsDown(LEFT_ARROW)) mvx -= 1;
+    if (keyIsDown(68) || keyIsDown(RIGHT_ARROW)) mvx += 1;
+    if (keyIsDown(87) || keyIsDown(UP_ARROW)) mvy -= 1;
+    if (keyIsDown(83) || keyIsDown(DOWN_ARROW)) mvy += 1;
+    if (mvx !== 0 && mvy !== 0){ mvx *= 0.7071; mvy *= 0.7071; }
+    let nx = player.x + mvx * player.speed * dt;
+    let ny = player.y + mvy * player.speed * dt;
+    const left = imgDrawX + player.size/2;
+    const right = imgDrawX + roomW*imgScale - player.size/2;
+    const top = imgDrawY + player.size/2;
+    const bottom = imgDrawY + roomH*imgScale - player.size/2;
+    player.x = constrain(nx, left, right);
+    player.y = constrain(ny, top, bottom);
+    if (mvx > 0) anim.facing = 1;
+    else if (mvx < 0) anim.facing = -1;
   } else {
-    textAlign(RIGHT);
-    text("Space: lamp | A: light diya | K: spam | R: restart", width - 10, 18);
-  }
-  pop();
-}
-
-// draw ending overlay
-function drawEnding(){
-  push();
-  fill(0,200);
-  rect(0,0,width,height);
-  textAlign(CENTER);
-  fill(255);
-  textSize(26);
-  if (endingType === 'memory'){
-    text("Memory Ending", width/2, 120);
-    textSize(14);
-    text("You revived the memories — the mother's warmth lives in the lamps.", width/2, 160);
-  } else if (endingType === 'knowledge'){
-    text("Knowledge Ending", width/2, 120);
-    textSize(14);
-    text("You turned on the lights of reason — rituals are understood now.", width/2, 160);
-  } else {
-    text("Balanced Ending", width/2, 120);
-    textSize(14);
-    text("You held memory and knowledge together — tradition with clarity.", width/2, 160);
-  }
-  textSize(12);
-  const lampCount = rooms.filter(r=>r.lamp.isOn).length;
-  const diyaCount = rooms.reduce((sum, r)=> sum + r.diyas.filter(d=>d.isLit).length, 0);
-  text(`Lamps: ${lampCount}  •  Diyas: ${diyaCount}`, width/2, 210);
-  text("Press R to restart", width/2, height - 60);
-  pop();
-}
-
-// pulses draw handled in draw loop; update pulses each frame
-// additional draw() adjustments to show pulses and maybe end screen
-
-// --------- finalize draw to include pulses & ending ----------
-// we replace the base draw above to include final overlay and pulses drawing
-// adjust final draw by wrapping into main draw loop after updates
-
-// (Note: we used a simplified approach: draw() above already draws world and UI. Now
-// we need to ensure pulses are drawn and ending overlay is shown when gameState == 2.)
-
-// We will override draw() to include pulses rendering and ending overlay:
-function draw() {
-  const now = millis();
-  const dt = (last === 0) ? 0.016 : (now - last) / 1000;
-  last = now;
-
-  background(12);
-
-  if (gameState === 0){
-    drawIntro();
-    return;
+    // magnet pull behavior: player lerps strongly towards ghost; ghost stays (attached)
+    if (attachedGhost){
+      player.x = lerp(player.x, attachedGhost.x, ATTACHED_PULL_STRENGTH);
+      player.y = lerp(player.y, attachedGhost.y, ATTACHED_PULL_STRENGTH);
+    }
   }
 
-  // update logic
-  player.update(dt);
-  ghost.update(dt);
-  enforceGhostPresence();
+  // update ghosts
+  for (let g of ghosts) g.update(dt);
 
-  // update pulses
+  // update pulses and cleanup
   for (let p of pulses) p.update(dt);
   pulses = pulses.filter(p => !p.done());
 
-  // draw world: rooms -> lights -> ghost -> player -> pulses -> UI
-  for (let r of rooms) r.draw();
-  for (let r of rooms){
-    if (r.lamp.isOn) drawLight(r.lamp.x, r.lamp.y - 12, 160, 200);
-    for (let d of r.diyas) if (d.isLit) drawLight(d.x, d.y - 2, 70, 140);
-  }
+  // draw lights (below characters)
+  for (let L of lights) drawLightSprite(L);
 
-  // ghost visibility
-  let ghostIdx = ghostRoomIndex();
-  let ghostVisible = true;
-  if (ghostIdx !== null && rooms[ghostIdx].lightLevel() >= 2) ghostVisible = false;
-  if (ghostVisible) ghost.draw();
-
-  // pulses draw (on top of ghost to show blow)
+  // draw pulses (visual)
   for (let p of pulses) p.draw();
 
-  player.draw();
+  // draw ghosts
+  for (let g of ghosts) g.draw();
+
+  // draw glows for lit lights
+  for (let L of lights){
+    if (L.isLit){
+      if (L.type === 'lamp') drawBigYellowGlow(L.x, L.y - 8, 0.32 * min(width,height), 240);
+      else {
+        const t = millis() * 0.0015 + L.pulsePhase;
+        const pulse = (sin(t) * 0.5 + 0.5) * 0.6 + 0.5;
+        drawBigYellowGlow(L.x, L.y - 8, 0.28 * pulse * min(width,height), 160 * pulse);
+      }
+    }
+  }
+
+  // process player's queued attacks: if attackPlaying or attackQueue > 0 then check collisions
+  processPlayerAttackCollision();
+
+  // when attached: handle spam timer and success/failure
+  if (attachedGhost){
+    let elapsed = millis() - spamStart;
+    if (!spamSuccess && spamCount >= SPAM_TARGET && spamStart > 0 && elapsed <= SPAM_WINDOW){
+      spamSuccess = true;
+      // keep playing queued attack loops
+      if (!anim.attackPlaying && anim.attackQueue > 0){
+        anim.attackPlaying = true;
+        anim.mode = 'attack';
+        anim.frame = 0;
+        anim.fps = 20;
+      }
+    }
+    if (!spamSuccess && spamStart > 0 && elapsed > SPAM_WINDOW){
+      // failed: lose life and push ghost away
+      player.lives = max(0, player.lives - 1);
+      detachGhostAndPushAway(attachedGhost, true);
+      resetSpam();
+      if (player.lives <= 0){ gameState = 6; return; }
+    }
+  }
+
+  // draw player (advance animations)
+  updatePlayerAnim(dt);
+  drawPlayerSprite();
+
+  // apply global tint that fades as lights are lit
+  const litCount = lights.filter(l => l.isLit).length;
+  const fractionLit = litCount / lights.length;
+  const tintAlpha = START_TINT * (1 - fractionLit);
+  push(); noStroke(); fill(0, 255 * tintAlpha); rectMode(CORNER); rect(0, 0, width, height); pop();
+
+  // UI
   drawUI();
 
-  // check spam start (already in earlier code)
-  const distPG = dist(player.x, player.y, ghost.x, ghost.y);
-  const playerLight = rooms[player.roomIndex].lightLevel();
-  if (!isSpamming && distPG < 48 && playerLight <= 1 && gameState === 1){
-    startSpam();
+  // check win conditions (diya-only, full, lamps-only)
+  checkWinConditions();
+
+  // attachment detection: only if both ghost and player are in dark and within attachDistance
+  if (!attachedGhost){
+    const attachDistance = 48; // tight magnet distance
+    for (let g of ghosts){
+      if (!g.alive || g.state === 'dead') continue;
+      if (!g.isInDarkArea()) continue;                // ghost must be in dark
+      if (!isPlayerInDarkArea()) continue;           // player must be in dark
+      if (dist(g.x, g.y, player.x, player.y) <= attachDistance){
+        // attach: ghost stops moving (handled by its attached flag)
+        attachedGhost = g;
+        g.attached = true;
+        g.state = 'attack';
+        spamCount = 0; spamStart = millis(); spamSuccess = false;
+        // queue one attack anim so the player sees pushback animation when spamming
+        anim.attackQueue = max(0, anim.attackQueue);
+        break;
+      }
+    }
   }
 
-  // evaluate progression: all rooms visited -> evaluate ending
-  const allVisited = rooms.every(r => r.visited);
-  if (allVisited && gameState === 1 && millis() - lastEvalTime > 400){
-    evaluateEnding();
+  // ensure ghost population grows to GHOST_MAX (spawn handled above)
+}
+
+// ---------- helper: update player animation with precise dt-driven frames ----------
+function updatePlayerAnim(dt){
+  // when attack queue exists or attackPlaying, we must play full loops for each queued press
+  if (anim.attackPlaying || anim.attackQueue > 0){
+    if (!anim.attackPlaying && anim.attackQueue > 0){
+      // start a loop
+      anim.attackPlaying = true;
+      anim.mode = 'attack';
+      anim.frame = 0;
+      anim.fps = 18;
+    }
+    if (anim.attackPlaying){
+      anim.frame += anim.fps * dt;
+      if (ATTACK_FRAMES > 0 && anim.frame >= ATTACK_FRAMES){
+        // one full loop completed
+        anim.frame = 0;
+        if (anim.attackQueue > 0) {
+          anim.attackQueue--; // consume one queued press (each press = a full loop)
+          // continue playing next loop automatically if more queued
+          if (anim.attackQueue <= 0){
+            anim.attackPlaying = false;
+            anim.mode = (!attachedGhost && (keyIsDown(65)||keyIsDown(68)||keyIsDown(87)||keyIsDown(83))) ? 'walk' : 'idle';
+            anim.fps = anim.mode === 'walk' ? 10 : 6;
+          }
+        } else {
+          // no queued loops left
+          anim.attackPlaying = false;
+          anim.mode = (!attachedGhost && (keyIsDown(65)||keyIsDown(68)||keyIsDown(87)||keyIsDown(83))) ? 'walk' : 'idle';
+          anim.fps = anim.mode === 'walk' ? 10 : 6;
+        }
+      }
+    }
+    return;
   }
 
-  // if ending state, show overlay
-  if (gameState === 2){
-    drawEnding();
+  // not attacking: set mode based on movement
+  const moving = (keyIsDown(65)||keyIsDown(68)||keyIsDown(87)||keyIsDown(83));
+  if (moving && !attachedGhost){
+    if (anim.mode !== 'walk'){ anim.mode = 'walk'; anim.frame = 0; anim.fps = 10; }
+    anim.frame += anim.fps * dt;
+    if (WALK_FRAMES > 0) anim.frame = anim.frame % WALK_FRAMES;
+  } else {
+    if (anim.mode !== 'idle'){ anim.mode = 'idle'; anim.frame = 0; anim.fps = 6; }
+    anim.frame += anim.fps * dt;
+    if (IDLE_FRAMES > 0) anim.frame = anim.frame % IDLE_FRAMES;
   }
 }
 
-// restart key
-function keyTyped(){
-  if (key.toLowerCase() === 'r') resetGame();
+// ---------- input handlers ----------
+function keyPressed(){
+  if (gameState !== 2) return;
+  if (key.toLowerCase() === 'e'){
+    // toggle nearest light
+    let nearest = null, md = 1e9;
+    for (let L of lights){
+      let d = dist(player.x, player.y, L.x, L.y);
+      if (d < md){ md = d; nearest = L; }
+    }
+    if (nearest && md <= LIGHT_RANGE){
+      nearest.isLit = !nearest.isLit;
+      // when lighting, push away / kill nearest ghost if needed (small feedback)
+      if (nearest.isLit){
+        let alive = ghosts.filter(g => g.alive && g.state !== 'dead');
+        if (alive.length){
+          alive.sort((a,b) => dist(a.x,a.y,nearest.x,nearest.y) - dist(b.x,b.y,nearest.x,nearest.y));
+          alive[0].kill('light'); // kill nearest ghost as they get into light
+        }
+      }
+    }
+  } else if (key.toLowerCase() === 'q'){
+    // Q-spam mechanic and attack queue
+    if (attachedGhost){
+      if (spamStart === 0) spamStart = millis();
+      spamCount++;
+      anim.attackQueue++; // each press queues a full loop
+      if (!anim.attackPlaying){ anim.attackPlaying = true; anim.mode = 'attack'; anim.frame = 0; anim.fps = 18; }
+    } else {
+      // if not attached, Q triggers attack animation loops (combo)
+      anim.attackQueue++;
+      if (!anim.attackPlaying){ anim.attackPlaying = true; anim.mode = 'attack'; anim.frame = 0; anim.fps = 18; }
+    }
+  }
 }
 
-// EOF
+function keyReleased(){
+  if (gameState !== 2) return;
+  if (key.toLowerCase() === 'q'){
+    if (spamSuccess && attachedGhost){
+      // when spam is successful, require player to release Q to push ghost away
+      detachGhostAndPushAway(attachedGhost, false);
+      resetSpam();
+    }
+  }
+}
+
+function mousePressed(){
+  // used for menus / replay buttons via mouseClicked()
+}
+
+// ---------- attack collision ----------
+function processPlayerAttackCollision(){
+  const isAttacking = anim.attackPlaying || anim.attackQueue > 0;
+  if (!isAttacking) return;
+  const atkR = player.size * 1.2;
+  for (let g of ghosts){
+    if (!g.alive) continue;
+    if (g.state === 'dead') continue;
+    if (dist(player.x, player.y, g.x, g.y) <= atkR){
+      g.kill('player');
+    }
+  }
+}
+
+// ---------- detach and push away ----------
+function detachGhostAndPushAway(g, penalty=false){
+  if (!g) return;
+  g.attached = false;
+  if (attachedGhost === g) attachedGhost = null;
+  g.state = 'walk';
+  // push to far corner away from player
+  const corners = [
+    {x: imgDrawX + 40, y: imgDrawY + 40},
+    {x: imgDrawX + roomW*imgScale - 40, y: imgDrawY + 40},
+    {x: imgDrawX + 40, y: imgDrawY + roomH*imgScale - 40},
+    {x: imgDrawX + roomW*imgScale - 40, y: imgDrawY + roomH*imgScale - 40}
+  ];
+  corners.sort((a,b) => dist(player.x, player.y, b.x, b.y) - dist(player.x, player.y, a.x, a.y));
+  const corner = corners[0];
+  g.x = corner.x + random(-40,40); g.y = corner.y + random(-40,40);
+  g.wanderTarget = g.randomTarget();
+  g.nextPulseDue = millis() + random(15000, 30000);
+  pulses.push(new Pulse(g.x, g.y, 0.12 * min(width,height), true));
+  if (penalty) g.nextPulseDue += 5000;
+}
+
+// ---------- reset spam ----------
+function resetSpam(){ spamCount = 0; spamStart = 0; spamSuccess = false; anim.attackQueue = 0; anim.attackPlaying = false; }
+
+// ---------- win/game logic ----------
+function checkWinConditions(){
+  const diyasLit = lights.filter(l => l.type === 'diya' && l.isLit).length;
+  const lampsLit = lights.filter(l => l.type === 'lamp' && l.isLit).length;
+
+  if (diyasLit === DIYA_COUNT && lampsLit === LAMP_COUNT){
+    ghosts.forEach(g => { g.alive = false; g.state = 'dead'; });
+    gameState = 4;
+    return;
+  }
+  if (diyasLit === DIYA_COUNT){
+    ghosts.forEach(g => { g.alive = false; g.state = 'dead'; });
+    gameState = 3;
+    return;
+  }
+  if (lampsLit === LAMP_COUNT && diyasLit < DIYA_COUNT){
+    gameState = 5;
+    return;
+  }
+}
+
+// ---------- draw helpers ----------
+function drawLightSprite(L){
+  push(); translate(L.x, L.y); noStroke();
+  fill(20,20); ellipse(0, 6 * imgScale, 30 * imgScale, 10 * imgScale);
+  if (L.type === 'lamp'){
+    if (lampImg){
+      const fh = lampImg.height, fw = lampImg.width;
+      const scaleFactor = (player.size / max(fw, fh)) * 1.0;
+      image(lampImg, 0, -6 * imgScale, fw * scaleFactor, fh * scaleFactor);
+    } else {
+      fill(80); rect(0, -10 * imgScale, 28 * imgScale, 44 * imgScale, 6 * imgScale);
+      fill(255,220,120); ellipse(0, -34 * imgScale, 12 * imgScale, 12 * imgScale);
+    }
+  } else {
+    if (diyaImg){
+      const fh = diyaImg.height, fw = diyaImg.width;
+      const scaleFactor = (player.size / max(fw, fh)) * 0.45;
+      image(diyaImg, 0, -6 * imgScale, fw * scaleFactor, fh * scaleFactor);
+    } else {
+      fill(90,60,30); ellipse(0, -6 * imgScale, 14 * imgScale, 8 * imgScale);
+      if (L.isLit){ fill(255,170,50); ellipse(0, -14 * imgScale, 6 * imgScale, 8 * imgScale); }
+    }
+  }
+  pop();
+}
+
+function drawBigYellowGlow(cx, cy, radius, alpha){
+  push(); const g = drawingContext;
+  const grad = g.createRadialGradient(cx, cy, 0, cx, cy, radius);
+  grad.addColorStop(0, `rgba(255,240,160,${alpha/255})`);
+  grad.addColorStop(0.2, `rgba(255,200,90,${(alpha*0.7)/255})`);
+  grad.addColorStop(0.5, `rgba(200,120,60,${(alpha*0.35)/255})`);
+  grad.addColorStop(1, `rgba(0,0,0,0)`);
+  g.fillStyle = grad; g.beginPath(); g.arc(cx, cy, radius, 0, TWO_PI); g.fill();
+  pop();
+}
+
+function drawPlayerSprite(){
+  if (!player.size || player.size < 8) player.size = 48;
+  let frameIdx = 0;
+  let flip = (anim.facing === -1);
+
+  if (anim.mode === 'attack' && playerAttack){
+    frameIdx = ATTACK_FRAMES ? floor(anim.frame % ATTACK_FRAMES) : 0;
+    drawSheetFrame(playerAttack, frameIdx, ATTACK_FRAMES, player.x, player.y, flip, player.size*1.4);
+    return;
+  }
+  if (anim.mode === 'walk' && playerWalk){
+    frameIdx = WALK_FRAMES ? floor(anim.frame % WALK_FRAMES) : 0;
+    drawSheetFrame(playerWalk, frameIdx, WALK_FRAMES, player.x, player.y, flip, player.size*1.4);
+    return;
+  }
+  if (anim.mode === 'idle' && playerIdle){
+    frameIdx = IDLE_FRAMES ? floor(anim.frame % IDLE_FRAMES) : 0;
+    drawSheetFrame(playerIdle, frameIdx, IDLE_FRAMES, player.x, player.y, flip, player.size*1.4);
+    return;
+  }
+
+  // fallback simple rect
+  push(); translate(player.x, player.y); if (flip) scale(-1,1); stroke(0); strokeWeight(2); fill(255,200,40); rectMode(CENTER); rect(0,0, player.size*1.1, player.size*1.1, 6); fill(30); ellipse((anim.facing===1 ? player.size*0.18 : -player.size*0.18), -player.size*0.12, max(3, player.size*0.08), max(3, player.size*0.08)); pop();
+}
+
+function drawSheetFrame(img, frameIdx, framesTotal, x, y, flip=false, targetSize=null){
+  if (!img || framesTotal <= 0) return;
+  let fh = img.height, fw = img.width / framesTotal;
+  let sx = Math.floor(frameIdx % framesTotal) * fw;
+  push(); translate(x, y); if (flip) scale(-1,1); imageMode(CENTER);
+  let sizeBase = targetSize || player.size;
+  let targetScale = sizeBase / max(fw, fh) * 1.4;
+  image(img, 0, 0, fw * targetScale, fh * targetScale, sx, 0, fw, fh);
+  pop();
+}
+
+// ---------- utility: is player in dark ----------
+function isPlayerInDarkArea(){
+  for (let L of lights){
+    if (!L.isLit) continue;
+    let glowR = (L.type === 'lamp') ? 0.32*min(width,height) : 0.28*min(width,height);
+    if (dist(player.x, player.y, L.x, L.y) <= glowR) return false;
+  }
+  return true;
+}
+
+// ---------- input events ----------
+function keyPressed(){
+  if (gameState !== 2) return;
+  if (key.toLowerCase() === 'e'){
+    // toggle nearest light within range
+    let nearest = null, md = 1e9;
+    for (let L of lights){
+      let d = dist(player.x, player.y, L.x, L.y);
+      if (d < md){ md = d; nearest = L; }
+    }
+    if (nearest && md <= LIGHT_RANGE){
+      nearest.isLit = !nearest.isLit;
+      // small reaction: lighting kills nearest ghosts that are too close to that light
+      if (nearest.isLit){
+        let alive = ghosts.filter(g => g.alive && g.state !== 'dead');
+        if (alive.length){
+          alive.sort((a,b) => dist(a.x,a.y,nearest.x,nearest.y) - dist(b.x,b.y,nearest.x,nearest.y));
+          // small chance to only push away instead of kill—here we kill if too close
+          if (dist(alive[0].x, alive[0].y, nearest.x, nearest.y) < player.size*1.5) alive[0].kill('light');
+        }
+      }
+    }
+  } else if (key.toLowerCase() === 'q'){
+    if (attachedGhost){
+      if (spamStart === 0) spamStart = millis();
+      spamCount++;
+      anim.attackQueue++;
+      if (!anim.attackPlaying){
+        anim.attackPlaying = true;
+        anim.mode = 'attack';
+        anim.frame = 0;
+        anim.fps = 18;
+      }
+    } else {
+      anim.attackQueue++;
+      if (!anim.attackPlaying){
+        anim.attackPlaying = true;
+        anim.mode = 'attack';
+        anim.frame = 0;
+        anim.fps = 18;
+      }
+    }
+  }
+}
+function keyReleased(){
+  if (gameState !== 2) return;
+  if (key.toLowerCase() === 'q'){
+    if (spamSuccess && attachedGhost){
+      // release only when Q released after success
+      detachGhostAndPushAway(attachedGhost, false);
+      resetSpam();
+    }
+  }
+}
+
+function mouseClicked(){
+  // replay/menus handled elsewhere
+}
+
+// ---------- detach / respawn helpers ----------
+function detachGhostAndPushAway(g, penalty=false){
+  if (!g) return;
+  g.attached = false;
+  if (attachedGhost === g) attachedGhost = null;
+  g.state = 'walk';
+  const corners = [
+    {x: imgDrawX + 40, y: imgDrawY + 40},
+    {x: imgDrawX + roomW*imgScale - 40, y: imgDrawY + 40},
+    {x: imgDrawX + 40, y: imgDrawY + roomH*imgScale - 40},
+    {x: imgDrawX + roomW*imgScale - 40, y: imgDrawY + roomH*imgScale - 40}
+  ];
+  corners.sort((a,b) => dist(player.x, player.y, b.x, b.y) - dist(player.x, player.y, a.x, a.y));
+  const corner = corners[0];
+  g.x = corner.x + random(-40,40);
+  g.y = corner.y + random(-40,40);
+  g.wanderTarget = g.randomTarget();
+  g.nextPulseDue = millis() + random(15000, 30000);
+  pulses.push(new Pulse(g.x, g.y, 0.12 * min(width, height), true));
+  if (penalty) g.nextPulseDue += 5000;
+}
+
+// ---------- reset spam ----------
+function resetSpam(){ spamCount = 0; spamStart = 0; spamSuccess = false; anim.attackQueue = 0; anim.attackPlaying = false; }
+
+// ---------- UI & screens ----------
+function drawUI(){
+  push();
+  fill(255); textSize(12); textAlign(LEFT, TOP);
+  text('Lit: ' + lights.filter(l=>l.isLit).length + '/' + lights.length, 10, 10);
+  for (let i=0;i<3;i++){ let x = 10 + i*26, y = 36; fill(i < player.lives ? color(255,80,80) : color(80)); rectMode(CORNER); rect(x,y,20,14,3); }
+  if (attachedGhost){ textAlign(CENTER, TOP); textSize(14); text(`Pulled! Press Q (${spamCount}/${SPAM_TARGET})`, width/2, 10); if (spamSuccess) text('Release Q to push ghost away', width/2, 34); }
+  pop();
+}
+
+function drawStart(){
+  background(12);
+  fill(255); textAlign(CENTER, CENTER); textSize(46); text('AWAY FROM HOME', width/2, height/2 - 80);
+  fill(255,40,80); rect(width/2, height/2 + 40, 160, 44, 8); fill(255); textSize(16); text('START', width/2, height/2 + 40);
+}
+function drawWin(msg){
+  background(12);
+  fill(255); textAlign(CENTER, CENTER); textSize(36); text('YOU WIN', width/2, height/2 - 40);
+  textSize(16); text(msg, width/2, height/2);
+  fill(255,40,80); rect(width/2, height/2 + 80, 160, 44, 8); fill(255); textSize(14); text('REPLAY', width/2, height/2 + 80);
+}
+function drawGameOver(){
+  background(6);
+  fill(255); textAlign(CENTER, CENTER); textSize(44); text('GAME OVER', width/2, height/2 - 60);
+  textSize(18); text('You followed the darkness too far — replay to try again.', width/2, height/2 - 18);
+  fill(255,40,80); rect(width/2, height/2 + 50, 160, 44, 8); fill(255); textSize(16); text('REPLAY', width/2, height/2 + 50);
+}
+
+// replay / restart controls
+function mouseClicked(){
+  if ([3,4,5].includes(gameState)){
+    const bx = width/2, by = height/2 + 80, bw = 160, bh = 44;
+    if (mouseX >= bx-bw/2 && mouseX <= bx+bw/2 && mouseY >= by-bh/2 && mouseY <= by+bh/2) restartGame();
+  } else if (gameState === 6){
+    const bx = width/2, by = height/2 + 50, bw = 160, bh = 44;
+    if (mouseX >= bx-bw/2 && mouseX <= bx+bw/2 && mouseY >= by-bh/2 && mouseY <= by+bh/2) restartGame();
+  } else if (gameState === 0){
+    const bx = width/2, by = height/2 + 40, bw = 160, bh = 44;
+    if (mouseX >= bx-bw/2 && mouseX <= bx+bw/2 && mouseY >= by-bh/2 && mouseY <= by+bh/2){ gameState = 2; resetSpam(); }
+  }
+}
+function restartGame(){
+  for (let L of lights) L.isLit = false;
+  player.lives = 3; attachedGhost = null; resetSpam();
+  placeLightsGrid(); spawnGhostPool(GHOST_START);
+  lastGhostAdd = millis() + GHOST_SPAWN_INTERVAL;
+  nextGlobalPulse = millis() + GLOBAL_PULSE_INTERVAL;
+  gameState = 2;
+}
+
+// ---------- check wins, helper functions ----------
+function checkWinConditions(){
+  const diyasLit = lights.filter(l => l.type==='diya' && l.isLit).length;
+  const lampsLit = lights.filter(l => l.type==='lamp' && l.isLit).length;
+
+  if (diyasLit === DIYA_COUNT && lampsLit === LAMP_COUNT){
+    ghosts.forEach(g => { g.alive = false; g.state = 'dead'; });
+    gameState = 4; return;
+  }
+  if (diyasLit === DIYA_COUNT){
+    ghosts.forEach(g => { g.alive = false; g.state = 'dead'; });
+    gameState = 3; return;
+  }
+  if (lampsLit === LAMP_COUNT && diyasLit < DIYA_COUNT){
+    gameState = 5; return;
+  }
+}
+
+// ---------- utility functions ----------
+function drawSheetFrame(img, frameIdx, framesTotal, x, y, flip=false, targetSize=null){
+  if (!img || framesTotal <= 0) return;
+  let fh = img.height, fw = img.width / framesTotal;
+  let sx = Math.floor(frameIdx % framesTotal) * fw;
+  push(); translate(x,y); if (flip) scale(-1,1); imageMode(CENTER);
+  let sizeBase = targetSize || player.size;
+  let targetScale = sizeBase / max(fw, fh) * 1.4;
+  image(img, 0, 0, fw * targetScale, fh * targetScale, sx, 0, fw, fh);
+  pop();
+}
+
+// ---------- window resize ----------
+function windowResized(){
+  resizeCanvas(windowWidth, windowHeight);
+  computeImagePlacement();
+  placeLightsGrid();
+  spawnGhostPool(GHOST_START);
+  player.x = imgDrawX + roomW*imgScale/2;
+  player.y = imgDrawY + roomH*imgScale/2;
+}
